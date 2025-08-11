@@ -1,0 +1,8 @@
+pywin32
+psutil
+tkinter
+numpy
+opencv-python
+insightface
+threading
+logging
