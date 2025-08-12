@@ -1,8 +1,20 @@
-pywin32
-psutil
-tkinter
+# Core Libraries
 numpy
 opencv-python
+requests
+
+# Face Recognition
 insightface
-threading
+onnxruntime
+
+# Database Connection
+SQLAlchemy
+psycopg2-binary
+python-dotenv
+
+# Windows Integration
+pywin32
+
+# Logging
 logging
+threading
