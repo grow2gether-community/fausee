@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Login - Face Verification</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #232946; }
+        .card { margin-top: 80px; }
+        .card-header { background: #eebbc3; color: #232946; }
+        .btn-dark { background: #393c6a; color: #eebbc3; border: none; }
+        .btn-link { color: #eebbc3; }
+        label { color: #232946; font-weight: 500; }
+        input.form-control { background: #f2f2f2; }
+        @media (max-width: 500px) {
+            .container { padding-left: 0; padding-right: 0; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-5">
+            <div class="card shadow-lg">
+                <div class="card-header">
+                    <h3 class="mb-0">Login to Face Verification</h3>
+                </div>
+                <div class="card-body">
+                    {% if error %}
+                        <div class="alert alert-danger">
+                            {{ error }}
+                        </div>
+                    {% endif %}
+                    <form method="POST">
+                        <div class="mb-3">
+                            <label for="username">Username</label>
+                            <input class="form-control" type="text" id="username" name="username" required autofocus>
+                        </div>
+                        <div class="mb-3">
+                            <label for="password">Password</label>
+                            <input class="form-control" type="password" id="password" name="password" required>
+                        </div>
+                        <button class="btn btn-dark w-100 mt-3" type="submit">Login</button>
+                    </form>
+                </div>
+                <div class="card-footer text-center">
+                    <a href="{{ url_for('register') }}" class="btn btn-link">New user? Register here</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
