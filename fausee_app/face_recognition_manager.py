@@ -3,9 +3,10 @@ import time
 import numpy as np
 import ctypes
 import tkinter as tk
+from tkinter import messagebox
+from PIL import Image, ImageTk
 import threading
 from insightface.app import FaceAnalysis
-import logging
 import win32gui
 import win32ts
 import win32api
@@ -14,7 +15,7 @@ import os
 from datetime import datetime
 import tempfile
 
-# Constants (keep your original configuration values)
+# Constants
 WM_WTSSESSION_CHANGE = 0x02B1
 WTS_SESSION_LOCK = 0x7
 WTS_SESSION_UNLOCK = 0x8
@@ -28,8 +29,9 @@ EMPLOYEE_RETRIES = 100
 EMPLOYEE_RETRY_DELAY = 2
 SUCCESS_RESTART_DELAY = 5
 
-pause_recognition = threading.Event()  # To pause recognition on lock
-pause_recognition.clear()  # Start unpaused
+pause_recognition = threading.Event()
+pause_recognition.clear()
+
 
 class FaceRecognitionManager:
     def __init__(self, logger_manager, image_dir):
@@ -39,31 +41,138 @@ class FaceRecognitionManager:
         self.pause_recognition = threading.Event()
         self.pause_recognition.clear()
         self.embedding_cache_path = os.path.join(tempfile.gettempdir(), "face_verifier.npy")
-        self.ref_embedding = self.load_or_fetch_embedding()
         self.image_dir = image_dir
-    def load_or_fetch_embedding(self):
-        # Try load cached embedding
+
         if os.path.exists(self.embedding_cache_path):
             try:
-                self.logger.log_event("Loading reference embedding from cache.")
-                emb = np.load(self.embedding_cache_path)
-                if emb is not None and emb.size > 0:
-                    return emb
+                os.remove(self.embedding_cache_path)
+                self.logger.log_event("Cleaned old reference embedding cache on startup.")
             except Exception as e:
-                self.logger.log_event(f"Failed to load embedding cache, will fetch fresh. Error: {e}", level="error")
+                self.logger.log_event(f"Failed to clean cache on startup: {e}", level="warning")
 
-        # Cache miss: fetch from local image, calculate embedding
+        self.ref_embedding = self.load_or_fetch_embedding()
+
+    # ----------- Embedding bootstrap & caching -----------
+
+    def load_or_fetch_embedding(self):
         embedding = self._fetch_embedding_from_local_image()
-
-        # Save to cache
         if embedding is not None:
             try:
                 np.save(self.embedding_cache_path, embedding)
                 self.logger.log_event("Saved new reference embedding to cache.")
             except Exception as e:
                 self.logger.log_event(f"Failed to save embedding cache. Error: {e}", level="warning")
-
         return embedding
+
+    def ensure_reference_embedding(self):
+        """Ensure we have a usable ref embedding."""
+        if self.ref_embedding is not None:
+            return self.ref_embedding
+
+        image_path = os.path.join(self.image_dir, "user.jpg")
+        if not os.path.exists(image_path):
+            self.logger.log_event("No user.jpg found. Reference embedding not available.", level="warning")
+            return None
+
+        embedding = self._fetch_embedding_from_local_image()
+        if embedding is not None:
+            np.save(self.embedding_cache_path, embedding)
+            self.ref_embedding = embedding
+        return self.ref_embedding
+
+    def capture_reference_image_interactive(self, parent=None):
+        """
+        Opens a modal Toplevel window to let user capture a webcam photo as reference.
+        """
+        if parent is None:
+            # Fallback for standalone execution, though not recommended in app flow
+            root = tk.Tk()
+        else:
+            root = tk.Toplevel(parent)
+
+        root.title("Capture Reference Image")
+        # Make the window modal
+        root.transient(parent)
+        root.grab_set()
+
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            self.logger.log_event("Camera not available for reference capture.", level="critical")
+            messagebox.showerror("Camera Error", "Could not access the camera.", parent=root)
+            root.destroy()
+            return None
+
+        panel = tk.Label(root)
+        panel.pack(padx=10, pady=10)
+
+        captured_frame = [None]
+        preview_active = True
+
+        def show_frame():
+            # Stop the loop if the window is closed
+            if not preview_active:
+                return
+
+            ret, frame = cap.read()
+            if ret:
+                cv2image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(cv2image)
+                imgtk = ImageTk.PhotoImage(image=img)
+                
+                panel.imgtk = imgtk
+                panel.config(image=imgtk)
+                captured_frame[0] = frame
+                
+            # Continue the preview loop
+            panel.after(30, show_frame)
+
+        def close_window():
+            # Gracefully stop the preview loop and release resources
+            nonlocal preview_active
+            preview_active = False
+            cap.release()
+            root.destroy()
+            if parent:
+                parent.focus_set()
+
+        def accept():
+            if captured_frame[0] is not None:
+                os.makedirs(self.image_dir, exist_ok=True)
+                save_path = os.path.join(self.image_dir, "user.jpg")
+                cv2.imwrite(save_path, captured_frame[0])
+                self.logger.log_event(f"Reference image saved at {save_path}.")
+                close_window()
+            else:
+                messagebox.showwarning("Warning", "No frame captured.", parent=root)
+
+        btn_frame = tk.Frame(root)
+        btn_frame.pack(pady=10)
+        # In a real scenario, a "Capture" button would freeze the frame.
+        # For simplicity, "Accept" saves the last shown frame.
+        tk.Button(btn_frame, text="Accept", command=accept).grid(row=0, column=0, padx=10)
+        tk.Button(btn_frame, text="Cancel", command=close_window).grid(row=0, column=1, padx=10)
+        
+        # Ensure the camera is released when the window is closed via 'X'
+        root.protocol("WM_DELETE_WINDOW", close_window)
+
+        show_frame()
+        # The mainloop is handled by the parent, but we wait for the Toplevel window to close
+        root.wait_window()
+
+        # Check if an image was actually saved
+        if os.path.exists(os.path.join(self.image_dir, "user.jpg")):
+            return os.path.join(self.image_dir, "user.jpg")
+        return None
+
+    def update_reference_image(self, parent_window=None):
+        """Force user to update reference image and recompute embedding."""
+        image_path = self.capture_reference_image_interactive(parent_window)
+        if image_path:
+            embedding = self._fetch_embedding_from_local_image()
+            if embedding is not None:
+                np.save(self.embedding_cache_path, embedding)
+                self.ref_embedding = embedding
+                self.logger.log_event("Reference image updated and embedding recomputed.")
 
     def _fetch_embedding_from_local_image(self):
         image_path = os.path.join(self.image_dir, "user.jpg")
@@ -86,6 +195,8 @@ class FaceRecognitionManager:
         self.logger.log_event("Successfully extracted reference face embedding from local image.")
         return normalized_embed
 
+    # ----------- Model init / housekeeping -----------
+
     def _init_face_model(self):
         try:
             app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
@@ -96,12 +207,12 @@ class FaceRecognitionManager:
             sys.exit(1)
 
     def _remove_unneeded_models(self):
-        # Remove landmark_3d_68 if present
         if 'landmark_3d_68' in self.app.models:
             self.app.models.pop('landmark_3d_68')
         print("Insightface models loaded:", self.app.models)
 
-    # Session lock/unlock handler
+    # ----------- Session lock/unlock listener -----------
+
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
         if msg == WM_WTSSESSION_CHANGE:
             if wparam == WTS_SESSION_LOCK:
@@ -121,6 +232,8 @@ class FaceRecognitionManager:
         hwnd = win32gui.CreateWindowEx(0, class_atom, "Session Change Listener", 0, 0, 0, 0, 0, 0, 0, hinst, None)
         win32ts.WTSRegisterSessionNotification(hwnd, win32ts.NOTIFY_FOR_THIS_SESSION)
         win32gui.PumpMessages()
+
+    # ----------- Camera helpers -----------
 
     @staticmethod
     def is_camera_accessible(device_index=0):
@@ -155,6 +268,8 @@ class FaceRecognitionManager:
                 )
                 next_alert_threshold += CAMERA_DOWNTIME_ALERT_INTERVAL
 
+    # ----------- UI / matching helpers -----------
+
     def create_alert_window(self, text):
         win = tk.Tk()
         win.attributes('-fullscreen', True)
@@ -162,7 +277,7 @@ class FaceRecognitionManager:
         win.configure(bg='red')
         label = tk.Label(
             win,
-            text="Couldn't find employee in the frame!",
+            text=text,
             font=("Arial", 50),
             fg="white",
             bg="red"
@@ -186,135 +301,111 @@ class FaceRecognitionManager:
     def lock_system():
         ctypes.windll.user32.LockWorkStation()
 
-    # def monitor_loop(self):
-    #     while True:
-    #         time.sleep(1)
-    #         if self.pause_recognition.is_set():
-    #             continue
-    #         self.wait_for_camera()
-    #         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    #         if not cap.isOpened():
-    #             continue
-    #         ret, frame = cap.read()
-    #         if not ret or frame is None:
-    #             cap.release()
-    #             continue
-    #         frame = cv2.resize(frame, FRAME_RESIZE)
-    #         faces = self.app.get(frame)
-    #         if faces:
-    #             alert_window = self.create_alert_window(text="Persons detected in the frame!")
-    #             self.logger.log_event("Persons detected in monitor loop.")
+    # ----------- Internal watch loop primitive -----------
 
-    #             cap.release()
-    #             continue
-    #         alert_window.destroy()
-    def _face_watch_loop(self, 
-                     condition_check_fn, 
-                     alert_text, 
-                     max_attempts, 
-                     success_action_fn, 
-                     failure_action_fn, 
-                     delay_seconds):
+    def _face_watch_loop(self,
+                         condition_check_fn,
+                         alert_text,
+                         max_attempts,
+                         success_action_fn,
+                         failure_action_fn,
+                         delay_seconds):
         continuous_count = 0
         alert_window = None
 
         while True:
             if self.pause_recognition.is_set():
+                if alert_window:
+                    try:
+                        alert_window.destroy()
+                    except Exception:
+                        pass
+                    alert_window = None
                 time.sleep(1)
                 continue
 
             self.wait_for_camera()
             cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
             if not cap.isOpened():
+                time.sleep(delay_seconds)
                 continue
 
             ret, frame = cap.read()
+            cap.release()
             if not ret or frame is None:
-                cap.release()
+                time.sleep(delay_seconds)
                 continue
 
             frame = cv2.resize(frame, FRAME_RESIZE)
+
             if condition_check_fn(frame):
                 if alert_window is None:
                     alert_window = self.create_alert_window(text=alert_text)
                 continuous_count += 1
-                alert_window.update()
+                try:
+                    alert_window.update()
+                except Exception:
+                    alert_window = None
 
                 if continuous_count >= max_attempts:
-                    alert_window.destroy()
+                    if alert_window:
+                        try:
+                            alert_window.destroy()
+                        except Exception:
+                            pass
+                        alert_window = None
                     failure_action_fn()
-                    break
+                    return True
             else:
                 if alert_window:
-                    alert_window.destroy()
+                    try:
+                        alert_window.destroy()
+                    except Exception:
+                        pass
                     alert_window = None
                 continuous_count = 0
                 success_action_fn()
 
-            cap.release()
             time.sleep(delay_seconds)
 
+    # ----------- Public loops -----------
+
     def recognition_loop(self, ref_embed):
-        def condition(frame):
-            return not self.check_employee_in_frame(frame, ref_embed)  # True when NOT matched
-        self._face_watch_loop(condition_check_fn=condition,
-                            alert_text="Couldn't find employee in the frame!",
-                            max_attempts=EMPLOYEE_RETRIES,
-                            success_action_fn=lambda: None,
-                            failure_action_fn=lambda: self.lock_system(),
-                            delay_seconds=1)
+        alert_text = "Couldn't find employee in the frame!"
+        while True:
+            if self.pause_recognition.is_set():
+                time.sleep(1)
+                continue
+
+            failed = self._face_watch_loop(
+                condition_check_fn=lambda frame: not self.check_employee_in_frame(frame, ref_embed),
+                alert_text=alert_text,
+                max_attempts=EMPLOYEE_RETRIES,
+                success_action_fn=lambda: None,
+                failure_action_fn=lambda: None,
+                delay_seconds=1
+            )
+
+            if failed:
+                self.pause_recognition.set()
+                self.logger.log_event("Employee not found after max retries. Locking system.", level="error")
+                self.lock_system()
+
+                while self.pause_recognition.is_set():
+                    time.sleep(1)
 
     def monitor_loop(self):
-        def condition(frame):
-            return bool(self.app.get(frame))  # True when ANY face is detected
-        self._face_watch_loop(condition_check_fn=condition,
-                            alert_text="Unauthorized presence detected!",
-                            max_attempts=EMPLOYEE_RETRIES,
-                            success_action_fn=lambda: None,
-                            failure_action_fn=lambda: self.lock_system(),
-                            delay_seconds=2)
+        alert_text = "Unauthorized presence detected!"
+        while True:
+            if self.pause_recognition.is_set():
+                time.sleep(1)
+                continue
 
-    # def recognition_loop(self, ref_embed):
-    #     while True:
-    #         if self.pause_recognition.is_set():
-    #             time.sleep(1)
-    #             continue
-    #         self.wait_for_camera()
-    #         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    #         if not cap.isOpened():
-    #             continue
-    #         ret, frame = cap.read()
-    #         if not ret or frame is None:
-    #             cap.release()
-    #             continue
-    #         frame = cv2.resize(frame, FRAME_RESIZE)
-    #         if self.check_employee_in_frame(frame, ref_embed):
-    #             self.logger.log_event("Employee verified.")
-    #             cap.release()
-    #             time.sleep(SUCCESS_RESTART_DELAY)
-    #             continue
-    #         retry_count = 0
-    #         self.logger.log_event("Employee not detected. Starting verification retries.", level="warning")
-    #         alert_window = self.create_alert_window(text="Couldn't find employee in the frame!")
-    #         while retry_count < EMPLOYEE_RETRIES and not self.pause_recognition.is_set():
-    #             ret, frame = cap.read()
-    #             if not ret or frame is None:
-    #                 cap.release()
-    #                 self.wait_for_camera()
-    #                 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    #                 continue
-    #             frame = cv2.resize(frame, FRAME_RESIZE)
-    #             if self.check_employee_in_frame(frame, ref_embed):
-    #                 self.logger.log_event("Employee verified during retries.")
-    #                 alert_window.destroy()
-    #                 break
-    #             else:
-    #                 retry_count += 1
-    #                 alert_window.update()
-    #                 self.logger.log_event(f"Employee not found (Attempt {retry_count}/{EMPLOYEE_RETRIES})", level="warning")
-    #         cap.release()
-    #         if retry_count >= EMPLOYEE_RETRIES:
-    #             alert_window.destroy()
-    #             self.logger.log_event("Employee not found after max retries. Locking system.", level="error")
-    #             self.lock_system()
-    #             self.pause_recognition.set()
+            _ = self._face_watch_loop(
+                condition_check_fn=lambda frame: bool(self.app.get(frame)),
+                alert_text=alert_text,
+                max_attempts=EMPLOYEE_RETRIES,
+                success_action_fn=lambda: None,
+                failure_action_fn=lambda: self.lock_system(),
+                delay_seconds=2
+            )
