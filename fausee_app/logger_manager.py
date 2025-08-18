@@ -1,10 +1,41 @@
+# import os
+# import logging
+# from datetime import datetime
+
+# class LoggerManager:
+#     def __init__(self, app_name="FaceVerificationApp"):
+#         self.log_dir = os.path.join(os.getenv('ProgramData'), app_name, 'Logs')
+#         os.makedirs(self.log_dir, exist_ok=True)
+
+#         log_filename = f"log_{datetime.now().strftime('%Y-%m-%d')}.log"
+#         logging.basicConfig(
+#             filename=os.path.join(self.log_dir, log_filename),
+#             level=logging.INFO,
+#             format='%(asctime)s - %(levelname)s - %(message)s',
+#             filemode='a'
+#         )
+
+#     def start_session(self):
+#         logging.info("Application starting new session...")
+
+#     def stop_session(self):
+#         logging.info("Application shutting down.")
+
+#     def log_event(self, message, level="info"):
+#         getattr(logging, level)(message)
+
+#     def get_log_dir(self):
+#         return self.log_dir
+
+
 import os
 import logging
 from datetime import datetime
 
 class LoggerManager:
     def __init__(self, app_name="FaceVerificationApp"):
-        self.log_dir = os.path.join(os.getenv('ProgramData'), app_name, 'Logs')
+        base_dir = os.getenv('ProgramData') or '.'
+        self.log_dir = os.path.join(base_dir, app_name, 'Logs')
         os.makedirs(self.log_dir, exist_ok=True)
 
         log_filename = f"log_{datetime.now().strftime('%Y-%m-%d')}.log"
@@ -12,16 +43,41 @@ class LoggerManager:
             filename=os.path.join(self.log_dir, log_filename),
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
-            filemode='a'
+            filemode='a',
+            encoding='utf-8'
         )
 
+    # ---- Standardized events the analyzer depends on ----
+
     def start_session(self):
-        logging.info("Application starting new session...")
+        logging.info("Application starting new session")
 
     def stop_session(self):
-        logging.info("Application shutting down.")
+        logging.info("Application shutting down")
 
+    def monitoring_started(self):
+        logging.info("Monitoring started by user")
+
+    def monitoring_stopped(self):
+        logging.info("Monitoring stopped by user")
+
+    def system_locked(self):
+        logging.info("System locked")
+
+    def system_unlocked(self):
+        logging.info("System unlocked")
+
+    def camera_inaccessible(self):
+        logging.info("Camera inaccessible")
+
+    def camera_accessible(self):
+        logging.info("Camera accessible again")
+
+    # ---- General logger for other events ----
     def log_event(self, message, level="info"):
+        level = level.lower()
+        if level not in {"info", "warning", "error", "critical", "debug"}:
+            level = "info"
         getattr(logging, level)(message)
 
     def get_log_dir(self):
