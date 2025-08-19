@@ -26,3 +26,27 @@ class LoggerManager:
 
     def get_log_dir(self):
         return self.log_dir
+    
+    def start_session(self):
+        logging.info("Application starting new session")
+
+    def stop_session(self):
+        logging.info("Application shutting down")
+
+    def monitoring_started(self):
+        logging.info("Monitoring started by user")
+
+    def monitoring_stopped(self):
+        logging.info("Monitoring stopped by user")
+
+    def system_locked(self):
+        logging.info("System locked")
+
+    def system_unlocked(self):
+        logging.info("System unlocked")
+
+    def camera_inaccessible(self):
+        logging.info("Camera inaccessible")
+
+    def camera_accessible(self):
+        logging.info("Camera accessible again")
