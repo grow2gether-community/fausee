@@ -85,13 +85,11 @@ class FaceRecognitionManager:
         Opens a modal Toplevel window to let user capture a webcam photo as reference.
         """
         if parent is None:
-            # Fallback for standalone execution, though not recommended in app flow
             root = tk.Tk()
         else:
             root = tk.Toplevel(parent)
 
         root.title("Capture Reference Image")
-        # Make the window modal
         root.transient(parent)
         root.grab_set()
 
@@ -109,25 +107,19 @@ class FaceRecognitionManager:
         preview_active = True
 
         def show_frame():
-            # Stop the loop if the window is closed
             if not preview_active:
                 return
-
             ret, frame = cap.read()
             if ret:
                 cv2image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(cv2image)
                 imgtk = ImageTk.PhotoImage(image=img)
-                
                 panel.imgtk = imgtk
                 panel.config(image=imgtk)
                 captured_frame[0] = frame
-                
-            # Continue the preview loop
             panel.after(30, show_frame)
 
         def close_window():
-            # Gracefully stop the preview loop and release resources
             nonlocal preview_active
             preview_active = False
             cap.release()
@@ -147,19 +139,14 @@ class FaceRecognitionManager:
 
         btn_frame = tk.Frame(root)
         btn_frame.pack(pady=10)
-        # In a real scenario, a "Capture" button would freeze the frame.
-        # For simplicity, "Accept" saves the last shown frame.
         tk.Button(btn_frame, text="Accept", command=accept).grid(row=0, column=0, padx=10)
         tk.Button(btn_frame, text="Cancel", command=close_window).grid(row=0, column=1, padx=10)
         
-        # Ensure the camera is released when the window is closed via 'X'
         root.protocol("WM_DELETE_WINDOW", close_window)
 
         show_frame()
-        # The mainloop is handled by the parent, but we wait for the Toplevel window to close
         root.wait_window()
 
-        # Check if an image was actually saved
         if os.path.exists(os.path.join(self.image_dir, "user.jpg")):
             return os.path.join(self.image_dir, "user.jpg")
         return None
@@ -216,10 +203,10 @@ class FaceRecognitionManager:
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
         if msg == WM_WTSSESSION_CHANGE:
             if wparam == WTS_SESSION_LOCK:
-                self.logger.log_event("System locked, pausing face recognition.")
+                self.logger.log_event("System locked")
                 self.pause_recognition.set()
             elif wparam == WTS_SESSION_UNLOCK:
-                self.logger.log_event("System unlocked, resuming face recognition.")
+                self.logger.log_event("System unlocked")
                 self.pause_recognition.clear()
         return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
 
@@ -235,8 +222,8 @@ class FaceRecognitionManager:
 
     # ----------- Camera helpers -----------
 
-    @staticmethod
-    def is_camera_accessible(device_index=0):
+    def is_camera_accessible(self, device_index=0):
+        self.logger.log_event(f"Checking camera accessibility on device {device_index}.")
         cap = cv2.VideoCapture(device_index)
         if not cap.isOpened():
             return False
@@ -246,24 +233,24 @@ class FaceRecognitionManager:
 
     def wait_for_camera(self):
         if self.is_camera_accessible():
-            self.logger.log_event("Camera is accessible.")
+            self.logger.log_event("Camera accessible again")
             return True
 
         downtime_start = time.time()
         next_alert_threshold = CAMERA_DOWNTIME_ALERT_INTERVAL
-        self.logger.log_event("Camera inaccessible. Waiting...", level="warning")
+        self.logger.log_event("Camera inaccessible", level="warning")
 
         while True:
             time.sleep(CAMERA_RETRY_DELAY)
             if self.is_camera_accessible():
                 total_downtime = time.time() - downtime_start
-                self.logger.log_event(f"Camera became accessible after {total_downtime:.2f} seconds.")
+                self.logger.log_event("Camera accessible again")
                 return True
 
             elapsed_time = time.time() - downtime_start
             if elapsed_time >= next_alert_threshold:
                 self.logger.log_event(
-                    f"Camera has been inaccessible for over {next_alert_threshold} seconds. (Admin alert placeholder)",
+                    f"Camera inaccessible for over {next_alert_threshold} seconds.",
                     level="warning"
                 )
                 next_alert_threshold += CAMERA_DOWNTIME_ALERT_INTERVAL
@@ -310,7 +297,6 @@ class FaceRecognitionManager:
                          success_action_fn,
                          failure_action_fn,
                          delay_seconds):
-        continuous_count = 0
         alert_window = None
 
         while True:
@@ -324,48 +310,53 @@ class FaceRecognitionManager:
                 time.sleep(1)
                 continue
 
+            # Wait for camera to be accessible before capture
             self.wait_for_camera()
             cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
             if not cap.isOpened():
                 time.sleep(delay_seconds)
                 continue
 
-            ret, frame = cap.read()
-            cap.release()
-            if not ret or frame is None:
-                time.sleep(delay_seconds)
-                continue
+            continuous_count = 0
+            while continuous_count < max_attempts and not self.pause_recognition.is_set():
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    continue
 
-            frame = cv2.resize(frame, FRAME_RESIZE)
+                frame = cv2.resize(frame, FRAME_RESIZE)
 
-            if condition_check_fn(frame):
-                if alert_window is None:
-                    alert_window = self.create_alert_window(text=alert_text)
-                continuous_count += 1
-                try:
-                    alert_window.update()
-                except Exception:
-                    alert_window = None
-
-                if continuous_count >= max_attempts:
+                if condition_check_fn(frame):  # person not found
+                    if alert_window is None:
+                        alert_window = self.create_alert_window(text=alert_text)
+                    continuous_count += 1
+                    try:
+                        alert_window.update()
+                    except Exception:
+                        alert_window = None
+                else:  # person found
                     if alert_window:
                         try:
                             alert_window.destroy()
                         except Exception:
                             pass
                         alert_window = None
-                    failure_action_fn()
-                    return True
-            else:
+                    continuous_count = 0
+                    success_action_fn()
+                    break  # exit inner loop
+
+            cap.release()
+
+            if continuous_count >= max_attempts:
                 if alert_window:
                     try:
                         alert_window.destroy()
                     except Exception:
                         pass
                     alert_window = None
-                continuous_count = 0
-                success_action_fn()
+                failure_action_fn()
+                return True
 
+            # sleep only when person found
             time.sleep(delay_seconds)
 
     # ----------- Public loops -----------
@@ -383,7 +374,7 @@ class FaceRecognitionManager:
                 max_attempts=EMPLOYEE_RETRIES,
                 success_action_fn=lambda: None,
                 failure_action_fn=lambda: None,
-                delay_seconds=1
+                delay_seconds=5  # 5s cycle when person is present
             )
 
             if failed:
@@ -407,5 +398,5 @@ class FaceRecognitionManager:
                 max_attempts=EMPLOYEE_RETRIES,
                 success_action_fn=lambda: None,
                 failure_action_fn=lambda: self.lock_system(),
-                delay_seconds=2
+                delay_seconds=5
             )
