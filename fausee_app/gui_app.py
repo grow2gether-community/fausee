@@ -62,7 +62,7 @@ class DashboardApp(tk.Tk):
         self.login_btn.grid(row=0, column=3, padx=10)
         self.update_img_btn = ttk.Button(btn_frame, text="Update Reference Image", command=self.update_ref_image)
         self.update_img_btn.grid(row=0, column=4, padx=10)
-        
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
         # Status labels
         self.status_var = tk.StringVar()
         self.auth_var = tk.StringVar()
@@ -82,8 +82,16 @@ class DashboardApp(tk.Tk):
         self.update_status_banners()
         self.load_data()
 
-    # ---------- UI helpers ----------
+    # ---------- Utils ----------
+    @staticmethod
+    def format_seconds(seconds: int) -> str:
+        """Convert seconds into hh:mm:ss format string."""
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        return f"{h:02}:{m:02}:{s:02}"
 
+    # ---------- UI helpers ----------
     def update_status_banners(self):
         auth = self.controller.refresh_auth_state()
         mon = self.controller.monitoring_active and not self.controller.face_manager.pause_recognition.is_set()
@@ -111,7 +119,6 @@ class DashboardApp(tk.Tk):
         self.after(2000, check_auth)
 
     # ---------- Data load ----------
-
     def load_data(self):
         def analyze_and_load():
             self.status_var.set("Analyzing logs...")
@@ -127,7 +134,17 @@ class DashboardApp(tk.Tk):
                     self.tree.delete(item)
                 for r in rows:
                     date, total_monitored, screen_time, active_time, updated_at = r
-                    self.tree.insert('', 'end', values=(date, total_monitored, screen_time, active_time, updated_at or ""))
+                    self.tree.insert(
+                        '',
+                        'end',
+                        values=(
+                            date,
+                            self.format_seconds(int(total_monitored)),
+                            self.format_seconds(int(screen_time)),
+                            self.format_seconds(int(active_time)),
+                            updated_at or ""
+                        )
+                    )
                 self.status_var.set("Dashboard refreshed.")
                 self.update_status_banners()
 
@@ -136,7 +153,6 @@ class DashboardApp(tk.Tk):
         threading.Thread(target=analyze_and_load, daemon=True).start()
 
     # ---------- Start/Stop actions ----------
-
     def start_monitor(self):
         if not self.controller.refresh_auth_state():
             messagebox.showwarning("Auth Required", "You must sign in before monitoring can start.")
@@ -175,3 +191,10 @@ class DashboardApp(tk.Tk):
         self.controller.update_reference_image(parent_window=self)
         messagebox.showinfo("Success", "Reference image updated.")
         self.update_status_banners()
+
+    def on_close(self):
+        # Ensure monitoring is stopped cleanly
+        if self.controller.monitoring_active:
+            self.controller.stop_recognition()
+            self.controller.logger_manager.log_event("Monitoring stopped by user (app closed).")
+        self.destroy()

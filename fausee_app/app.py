@@ -186,7 +186,15 @@ def run_app():
 
     # Launch GUI dashboard (Start button handles auth gating)
     app = DashboardApp(controller)
-    app.mainloop()
+    
+    try:
+        app.mainloop()
+    except KeyboardInterrupt:
+        # Ensure monitoring is stopped cleanly
+        if controller.monitoring_active:
+            controller.stop_recognition()
+            controller.logger_manager.log_event("Monitoring stopped by user (Keyboard interrupt).")
+        controller.logger_manager.stop_session()
 
 if __name__ == "__main__":
     run_app()
