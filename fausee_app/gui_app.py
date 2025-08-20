@@ -153,16 +153,36 @@ class DashboardApp(tk.Tk):
         threading.Thread(target=analyze_and_load, daemon=True).start()
 
     # ---------- Start/Stop actions ----------
+    # def start_monitor(self):
+    #     if not self.controller.refresh_auth_state():
+    #         messagebox.showwarning("Auth Required", "You must sign in before monitoring can start.")
+    #         self.open_login()
+    #         return
+
+    #     # Pass self as the parent window
+    #     self.controller.start_recognition_loop(parent_window=self)
+    #     self.status_var.set("Recognition monitoring started.")
+    #     self.update_status_banners()
+
     def start_monitor(self):
         if not self.controller.refresh_auth_state():
             messagebox.showwarning("Auth Required", "You must sign in before monitoring can start.")
             self.open_login()
             return
 
-        # Pass self as the parent window
-        self.controller.start_recognition_loop(parent_window=self)
-        self.status_var.set("Recognition monitoring started.")
+        # Ask user if they want to be monitored
+        answer = messagebox.askyesno("Monitoring Choice", "Do you want to be monitored?")
+        if answer:
+            # Employee-specific monitoring
+            self.controller.start_recognition_loop(parent_window=self, use_reference=True)
+            self.status_var.set("Recognition monitoring (employee-specific) started.")
+        else:
+            # General monitoring
+            self.controller.start_recognition_loop(parent_window=self, use_reference=False)
+            self.status_var.set("General monitoring (any face presence) started.")
+
         self.update_status_banners()
+
 
     def stop_monitor(self):
         dlg = PasswordDialog(self, title="Verify to Stop Monitoring")

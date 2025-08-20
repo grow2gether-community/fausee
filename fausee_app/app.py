@@ -102,42 +102,87 @@ class MonitorAppController:
             self.logger_manager.log_event("Loop ended unexpectedly. Restarting in 3s...", level="warning")
             time.sleep(3)
 
-    def start_recognition_loop(self, parent_window=None):
+    # def start_recognition_loop(self, parent_window=None):
+    #     if not self.refresh_auth_state():
+    #         self.logger_manager.log_event("Blocked start: user not authenticated.", level="warning")
+    #         return
+
+    #     ref_embed = self.face_manager.ensure_reference_embedding()
+        
+    #     if ref_embed is None:
+    #         self.logger_manager.log_event("No reference image found. Prompting user for capture.", level="info")
+    #         # Pass the parent window to the update method
+    #         self.face_manager.update_reference_image(parent_window=parent_window)
+            
+    #         ref_embed = self.face_manager.ensure_reference_embedding()
+
+    #         if ref_embed is None:
+    #             self.logger_manager.log_event("Reference image capture cancelled or failed. Recognition not started.", level="warning")
+    #             return
+
+    #     # If thread exists & alive, just resume
+    #     if self.recognition_thread and self.recognition_thread.is_alive():
+    #         self.logger_manager.log_event("Recognition already running. Resuming...")
+    #         self.face_manager.pause_recognition.clear()
+    #         self.monitoring_active = True
+    #         return
+
+    #     # Start fresh thread
+    #     # self.logger_manager.log_event("Starting recognition loop in background thread.")
+    #     self.logger_manager.log_event("Monitoring started by user")
+    #     self.face_manager.pause_recognition.clear()
+    #     self.recognition_thread = threading.Thread(
+    #         target=self._loop_with_restart,
+    #         args=(self.face_manager.recognition_loop, ref_embed),
+    #         daemon=True
+    #     )
+    #     self.recognition_thread.start()
+    #     self.monitoring_active = True
+
+    def start_recognition_loop(self, parent_window=None, use_reference=True):
         if not self.refresh_auth_state():
             self.logger_manager.log_event("Blocked start: user not authenticated.", level="warning")
             return
 
-        ref_embed = self.face_manager.ensure_reference_embedding()
-        
-        if ref_embed is None:
-            self.logger_manager.log_event("No reference image found. Prompting user for capture.", level="info")
-            # Pass the parent window to the update method
-            self.face_manager.update_reference_image(parent_window=parent_window)
-            
-            ref_embed = self.face_manager.ensure_reference_embedding()
-
-            if ref_embed is None:
-                self.logger_manager.log_event("Reference image capture cancelled or failed. Recognition not started.", level="warning")
-                return
-
-        # If thread exists & alive, just resume
+        # If already running, resume
         if self.recognition_thread and self.recognition_thread.is_alive():
             self.logger_manager.log_event("Recognition already running. Resuming...")
             self.face_manager.pause_recognition.clear()
             self.monitoring_active = True
             return
 
-        # Start fresh thread
-        # self.logger_manager.log_event("Starting recognition loop in background thread.")
-        self.logger_manager.log_event("Monitoring started by user")
         self.face_manager.pause_recognition.clear()
-        self.recognition_thread = threading.Thread(
-            target=self._loop_with_restart,
-            args=(self.face_manager.recognition_loop, ref_embed),
-            daemon=True
-        )
-        self.recognition_thread.start()
         self.monitoring_active = True
+
+        if use_reference:
+            # Employee-specific monitoring
+            ref_embed = self.face_manager.ensure_reference_embedding()
+            if ref_embed is None:
+                self.logger_manager.log_event("No reference image found. Prompting user for capture.", level="info")
+                self.face_manager.update_reference_image(parent_window=parent_window)
+                ref_embed = self.face_manager.ensure_reference_embedding()
+                if ref_embed is None:
+                    self.logger_manager.log_event("Reference capture cancelled or failed. Monitoring not started.", level="warning")
+                    self.monitoring_active = False
+                    return
+
+            self.logger_manager.log_event("Monitoring started by user (reference mode)")
+            self.recognition_thread = threading.Thread(
+                target=self._loop_with_restart,
+                args=(self.face_manager.recognition_loop, ref_embed),
+                daemon=True
+            )
+        else:
+            # General presence monitoring
+            self.logger_manager.log_event("Monitoring started by user (general presence mode)")
+            self.recognition_thread = threading.Thread(
+                target=self._loop_with_restart,
+                args=(self.face_manager.monitor_loop,),
+                daemon=True
+            )
+
+        self.recognition_thread.start()
+
 
     def stop_recognition(self):
         """Pause the recognition loop."""
