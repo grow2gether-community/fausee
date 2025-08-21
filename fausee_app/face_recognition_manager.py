@@ -386,14 +386,14 @@ class FaceRecognitionManager:
                     time.sleep(1)
 
     def monitor_loop(self):
-        alert_text = "Unauthorized presence detected!"
+        alert_text = "No presence detected!"
         while True:
             if self.pause_recognition.is_set():
                 time.sleep(1)
                 continue
 
             _ = self._face_watch_loop(
-                condition_check_fn=lambda frame: bool(self.app.get(frame)),
+                condition_check_fn=lambda frame: not bool(self.app.get(frame)),
                 alert_text=alert_text,
                 max_attempts=EMPLOYEE_RETRIES,
                 success_action_fn=lambda: None,

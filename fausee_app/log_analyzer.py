@@ -27,6 +27,14 @@ class LogAnalyzer:
         self.db_manager = db_manager
         self._cache = {}
 
+    @staticmethod
+    def _format_seconds(seconds: int) -> str:
+        """Convert seconds into hh:mm:ss format string."""
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        return f"{h:02}:{m:02}:{s:02}"
+
     def parse_logs(self, file_path):
         events = []
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -47,7 +55,8 @@ class LogAnalyzer:
         cur = None
         for e in events:
             if e["event_key"] == start_key:
-                if cur is None: cur = e["timestamp"]
+                if cur is None:
+                    cur = e["timestamp"]
             elif e["event_key"] == stop_key and cur:
                 end = e["timestamp"]
                 if end >= cur:
@@ -83,7 +92,7 @@ class LogAnalyzer:
             return {"total_monitored": 0, "screen_time": 0, "active_time": 0}
 
         lock_intervals = self._build_intervals(events, "lock", "unlock", last_ts)
-        cam_intervals  = self._build_intervals(events, "cam_inaccessible", "cam_accessible", last_ts)
+        cam_intervals = self._build_intervals(events, "cam_inaccessible", "cam_accessible", last_ts)
 
         total_monitored = self._sum_intervals(monitor_intervals)
         locked_time = self._sum_overlap(monitor_intervals, lock_intervals)
@@ -104,16 +113,16 @@ class LogAnalyzer:
         if not os.path.exists(path):
             usage = {"total_monitored": 0, "screen_time": 0, "active_time": 0}
             self.db_manager.upsert_usage(today_str, **usage)
-            return usage
+            return {k: self._format_seconds(v) for k, v in usage.items()}
 
         mtime = os.path.getmtime(path)
         cached = self._cache.get(path)
         if cached and cached["mtime"] == mtime:
-            return cached["result"]
+            return {k: self._format_seconds(v) for k, v in cached["result"].items()}
 
         events = self.parse_logs(path)
         usage = self.calculate_usage(events)
         self.db_manager.upsert_usage(today_str, **usage)
 
         self._cache[path] = {"mtime": mtime, "result": usage}
-        return usage
+        return {k: self._format_seconds(v) for k, v in usage.items()}

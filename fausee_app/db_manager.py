@@ -2,7 +2,7 @@
 
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 class DBManager:
     def __init__(self, app_name="FaceVerificationApp"):
@@ -76,10 +76,29 @@ class DBManager:
         conn.commit()
         conn.close()
 
-    def read_all_stats(self):
+    def read_all_stats(self, filter_period="all"):
         conn = sqlite3.connect(self.db_file)
         cursor = conn.cursor()
-        cursor.execute("SELECT date, total_monitored, screen_time, active_time, updated_at FROM usage_stats")
+        
+        query = "SELECT date, total_monitored, screen_time, active_time, updated_at FROM usage_stats"
+        params = []
+
+        today = date.today()
+        if filter_period == "today":
+            query += " WHERE date = ?"
+            params.append(today.strftime("%Y-%m-%d"))
+        elif filter_period == "week":
+            start_of_week = today - timedelta(days=today.weekday())
+            query += " WHERE date >= ?"
+            params.append(start_of_week.strftime("%Y-%m-%d"))
+        elif filter_period == "month":
+            start_of_month = today.replace(day=1)
+            query += " WHERE date >= ?"
+            params.append(start_of_month.strftime("%Y-%m-%d"))
+
+        query += " ORDER BY date DESC"
+        cursor.execute(query, params)
+        
         rows = cursor.fetchall()
         conn.close()
         return rows
