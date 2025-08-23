@@ -12,6 +12,10 @@ SQLAlchemy
 psycopg2-binary
 python-dotenv
 
+# Web Framework
+Flask
+flask-cors
+
 # Windows Integration
 pywin32
 
